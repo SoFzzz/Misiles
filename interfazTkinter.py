@@ -14,8 +14,10 @@ class InterfazSimulacion:
         # Variables para los parámetros
         self.altura_misil = tk.DoubleVar(value="")  # Altura inicial del misil enemigo (vacío)
         self.distancia_ciudad = tk.DoubleVar(value="")  # Distancia del punto azul al cuadrado verde (vacío)
+        self.y_min_intercept = tk.DoubleVar(value="")  # Altura mínima de intercepción (vacío)
         self.simulacion_pausada = False
         self.animacion = None
+        self.animacion_terminada = False
         
         # Crear campos para ingresar parámetros
         tk.Label(root, text="Altura inicial del misil enemigo (m):").pack(pady=5)
@@ -25,6 +27,10 @@ class InterfazSimulacion:
         tk.Label(root, text="Distancia del antimisil a la ciudad (m):").pack(pady=5)
         self.distancia_entry = tk.Entry(root, textvariable=self.distancia_ciudad)
         self.distancia_entry.pack(pady=5)
+        
+        tk.Label(root, text="Distancia de intercepción (m):").pack(pady=5)
+        self.y_min_entry = tk.Entry(root, textvariable=self.y_min_intercept)
+        self.y_min_entry.pack(pady=5)
         
         # Botones de control
         self.start_button = tk.Button(root, text="Iniciar Simulación", command=self.iniciar_simulacion)
@@ -65,15 +71,22 @@ class InterfazSimulacion:
         try:
             h_misil = self.altura_misil.get()
             d_ciudad = self.distancia_ciudad.get()
+            y_min_intercept = self.y_min_intercept.get()
             g = 9.81
-            y_min_intercept = 5000
             dt = 0.01
 
             # Validar entradas
-            if h_misil <= 0 or d_ciudad <= 0:
-                raise ValueError("La altura y la distancia deben ser números positivos mayores a 0.")
+            if h_misil <= 0 or d_ciudad <= 0 or y_min_intercept <= 0:
+                raise ValueError("La altura, la distancia y la distancia de intercepción deben ser números positivos mayores a 0.")
+            if y_min_intercept >= h_misil:
+                raise ValueError("La distancia de intercepción debe ser menor que la altura inicial del misil enemigo.")
 
-            # Calcular los parámetros óptimos igual que en mine.py
+            # Habilitar botones de pausa y reinicio
+            self.pause_button.config(state=tk.NORMAL)
+            self.reset_button.config(state=tk.NORMAL)
+            self.start_button.config(state=tk.DISABLED)
+
+            # Calcular los parámetros óptimos
             v0, theta_deg, t_intercept, coords_intercept = calcular_intercepcion(
                 h_misil, d_ciudad, y_min_intercept, g
             )
@@ -118,14 +131,12 @@ class InterfazSimulacion:
 
             self.canvas.draw()
 
-            
-            
             self.animacion_terminada = False
 
             # Animar los puntos
             def actualizar(frame):
-                if self.animacion_terminada:
-                    return  # No hacer nada si la animación ya se detuvo
+                if self.animacion_terminada or not self.animacion:
+                    return self.punto_rojo, self.punto_azul, self.intercept_point
 
                 epsilon = 0.02  # Margen de tolerancia para el tiempo
                 current_time = frame * dt
@@ -146,50 +157,70 @@ class InterfazSimulacion:
                     # Detener la animación automáticamente
                     if self.animacion and not self.animacion_terminada:
                         self.animacion.event_source.stop()
-                        self.animacion_terminada = True  # Marcar la animación como terminada
+                        self.animacion_terminada = True
                         self.pause_button.config(state=tk.DISABLED)
-                        self.start_button.config(state=tk.NORMAL)  # Habilitar el botón de inicio
+                        self.start_button.config(state=tk.NORMAL)
+                        self.reset_button.config(state=tk.NORMAL)
                 return self.punto_rojo, self.punto_azul, self.intercept_point
 
             total_frames = int(t_intercept / dt) + 1
             self.animacion = FuncAnimation(self.figure, actualizar, frames=total_frames, interval=20, blit=True)
+            self.canvas.draw()
 
         except ValueError as e:
             messagebox.showerror("Error", f"Entrada inválida: {e}")
+            # Revertir estados de los botones en caso de error
+            self.start_button.config(state=tk.NORMAL)
+            self.pause_button.config(state=tk.DISABLED)
+            self.reset_button.config(state=tk.DISABLED)
         except Exception as e:
             messagebox.showerror("Error", f"Error inesperado: {e}")
+            # Revertir estados de los botones en caso de error
+            self.start_button.config(state=tk.NORMAL)
+            self.pause_button.config(state=tk.DISABLED)
+            self.reset_button.config(state=tk.DISABLED)
     
     def pausar_simulacion(self):
         """Pausa la simulación."""
         if not self.simulacion_pausada:
             self.simulacion_pausada = True
-            self.animacion.event_source.stop()
+            if self.animacion:
+                self.animacion.event_source.stop()
             self.pause_button.config(text="Reanudar Simulación")
         else:
             self.simulacion_pausada = False
-            self.animacion.event_source.start()
+            if self.animacion:
+                self.animacion.event_source.start()
             self.pause_button.config(text="Pausar Simulación")
     
     def reiniciar_simulacion(self):
         """Reinicia la simulación."""
-        self.altura_misil.set(10000)
-        self.distancia_ciudad.set(50000)
+        # Restablecer valores de entrada
+        self.altura_misil.set("")
+        self.distancia_ciudad.set("")
+        self.y_min_intercept.set("")
+        
+        # Limpiar gráfico
         self.ax.clear()
         self.ax.set_title("Simulación de Intercepción: Antimisil vs Misil enemigo")
         self.ax.set_xlabel("Distancia horizontal (m)")
         self.ax.set_ylabel("Altura (m)")
         self.canvas.draw()
+        
+        # Limpiar resultados
         self.resultados_text.config(state=tk.NORMAL)
         self.resultados_text.delete(1.0, tk.END)
         self.resultados_text.config(state=tk.DISABLED)
+        
+        # Restablecer estados de los botones
+        self.start_button.config(state=tk.NORMAL)
         self.pause_button.config(state=tk.DISABLED, text="Pausar Simulación")
         self.reset_button.config(state=tk.DISABLED)
+        
+        # Detener y limpiar animación
         if self.animacion:
             self.animacion.event_source.stop()
+            self.animacion._stop()
             self.animacion = None
-
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = InterfazSimulacion(root)
-    root.mainloop()
+        self.animacion_terminada = False
+        self.simulacion_pausada = False
